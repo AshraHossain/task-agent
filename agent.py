@@ -120,6 +120,19 @@ def steps_of(obj: dict) -> list[str]:
     return [str(step) for step in obj.get("steps") or []]
 
 
+_SECRET_ENV = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)", re.IGNORECASE)
+_SAFE_ENV_KEYS = {"PATH", "HOME", "LANG", "TMPDIR", "USER", "SHELL", "TERM"}
+
+
+def _safe_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
+
+
+def _sanitize(text: str) -> str:
+    """Escape non-printable/control characters so the terminal can't be spoofed."""
+    return "".join(c if c.isprintable() and c != "\\" else repr(c)[1:-1] for c in text)
+
+
 def run_shell(cmd: str, workdir: str) -> str:
     try:
         proc = subprocess.run(
@@ -130,6 +143,7 @@ def run_shell(cmd: str, workdir: str) -> str:
             text=True,
             timeout=CMD_TIMEOUT,
             check=False,  # non-zero exit is fed back to the LLM, not raised
+            env=_safe_env(),
         )
         out = f"exit={proc.returncode}\n{proc.stdout}{proc.stderr}"
     except subprocess.TimeoutExpired:
@@ -138,7 +152,7 @@ def run_shell(cmd: str, workdir: str) -> str:
 
 
 def confirm(cmd: str) -> bool:
-    return input(f"    run `{cmd}`? [y/N] ").strip().lower() in ("y", "yes")
+    return input(f"    run `{_sanitize(cmd)}`? [y/N] ").strip().lower() in ("y", "yes")
 
 
 def execute(
@@ -161,9 +175,9 @@ def execute(
         if not cmd:
             out = 'Reply with {"cmd": ...} or {"result": ...}.'
         elif approve(cmd):
-            log(f"    $ {cmd}")
+            log(f"    $ {_sanitize(cmd)}")
             out = run_shell(cmd, workdir)
-            log("      " + out.strip()[:800].replace("\n", "\n      "))
+            log("      " + _sanitize(out.strip()[:800]).replace("\n", "\n      "))
         else:
             out = "The user denied this command. Try another approach or report the step result."
         msgs = msgs + [
